@@ -8,7 +8,7 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-const uri = process.env.MONGODB_URI
+const uri = process.env.MONGODB_URI;
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
@@ -48,6 +48,75 @@ function convertNumberFields(data, fields) {
   });
   return converted;
 }
+
+// SortingFunction
+const sortFunc = (sortQuery) => {
+  if (!sortQuery) return { _id: -1 };
+  const [field, direction] = sortQuery.split(":");
+  const sortDirection = direction === "asc" ? 1 : -1;
+
+  const validSortFields = ["price", "name", "createdAt", "rating"];
+  if (validSortFields.includes(field)) {
+    return { [field]: sortDirection };
+  }
+  return { _id: -1 };
+};
+
+// SearchQueryFunction
+const searchFunc = (searchTerm) => {
+  if (!searchTerm) return {};
+  return {
+    $or: [
+      { name: { $regex: searchTerm, $options: "i" } },
+      { category: { $regex: searchTerm, $options: "i" } },
+      { description: { $regex: searchTerm, $options: "i" } },
+    ],
+  };
+};
+
+// Pagination function
+const paginationFunc = async (collection, query = {}, options = {}) => {
+  const { page, limit, sort } = options;
+
+  // Check if pagination parameter exists
+  const shouldPaginate = page !== undefined || limit !== undefined;
+
+  if (!shouldPaginate) {
+    // Return all results if no pagination requested
+    const data = await collection
+      .find(query)
+      .sort(sort || { _id: -1 })
+      .toArray();
+    return {
+      data,
+      pagination: null,
+    };
+  }
+
+  // Apply pagination
+  const currentPage = parseInt(page) || 1;
+  const pageSize = parseInt(limit) || 10;
+  const skip = (currentPage - 1) * pageSize;
+
+  const [data, total] = await Promise.all([
+    collection
+      .find(query)
+      .sort(sort || { _id: -1 })
+      .skip(skip)
+      .limit(pageSize)
+      .toArray(),
+    collection.countDocuments(query),
+  ]);
+  return {
+    data,
+    pagination: {
+      total,
+      page: currentPage,
+      pages: Math.ceil(total / pageSize),
+      limit: pageSize,
+    },
+  };
+};
 /* Utility functions End **/
 
 // Respond function
@@ -72,9 +141,6 @@ const crudOperation = async (
   res,
   options = {}
 ) => {
-  console.log(`data: ${data}`)
-  console.log(`res: ${res}`)
-  console.log(`options: ${options}`)
   try {
     let result;
     switch (operation) {
@@ -88,14 +154,25 @@ const crudOperation = async (
         );
         break;
       case "read":
-      result = await collection.find().toArray();
+        const { data: resultData, pagination } = await paginationFunc(
+          collection,
+          data,
+          {
+            page: options.page,
+            limit: options.limit,
+            sort: options.sort,
+          }
+        );
+        const responseData = pagination
+          ? { data: resultData, pagination }
+          : resultData;
         respond(
           res,
-          result.length > 0 ? 200 : 404,
-          result.length > 0
+          resultData.length > 0 ? 200 : 404,
+          resultData.length > 0
             ? `${capitalizedFirstLetter(options.entity)} retrieved successfully`
             : `No ${capitalizedFirstLetter(options.entity)} found`,
-          result
+          responseData
         );
         break;
       case "readOne":
@@ -154,15 +231,24 @@ async function run() {
     app.post("/food", async (req, res) => {
       const numberFields = ["price", "quantity"];
       const foodData = convertNumberFields(req.body, numberFields);
-      await crudOperation("create", foodCollection, foodData, res, {
-        entity: "food",
-      });
+      await crudOperation(
+        "create",
+        foodCollection,
+        { ...foodData, createAt: Date.now(), updateAt: Date.now() },
+        res,
+        {
+          entity: "food",
+        }
+      );
     });
 
     app.get("/foods", async (req, res) => {
-      // const { search, sort, page, limit } = req.query;
-      await crudOperation("read", foodCollection, {}, res, {
-        entity: "foods"
+      const { search, sort, page, limit } = req.query;
+      await crudOperation("read", foodCollection, searchFunc(search), res, {
+        entity: "foods",
+        sort: sortFunc(sort),
+        page: page,
+        limit: limit,
       });
     });
 
@@ -178,21 +264,33 @@ async function run() {
     });
 
     app.put("/food/:id", validateObjectId, async (req, res) => {
-      const numberFields = ["price", "quantity"];
+      const numberFields = ["price", "quantity", "createAt"];
       const foodData = convertNumberFields(req.body, numberFields);
-      await crudOperation("update", foodCollection, foodData, res, {
-        entity: "food",
-        filter: { _id: new ObjectId(req.params.id) },
-      });
+      await crudOperation(
+        "update",
+        foodCollection,
+        { ...foodData, updateAt: Date.now() },
+        res,
+        {
+          entity: "food",
+          filter: { _id: new ObjectId(req.params.id) },
+        }
+      );
     });
 
     app.patch("/food/:id", validateObjectId, async (req, res) => {
       const numberFields = ["price", "quantity"];
       const foodData = convertNumberFields(req.body, numberFields);
-      await crudOperation("update", foodCollection, foodData, res, {
-        entity: "food",
-        filter: { _id: new ObjectId(req.params.id) },
-      });
+      await crudOperation(
+        "update",
+        foodCollection,
+        { ...foodData, updateAt: Date.now() },
+        res,
+        {
+          entity: "food",
+          filter: { _id: new ObjectId(req.params.id) },
+        }
+      );
     });
 
     app.delete("/food/:id", validateObjectId, async (req, res) => {
