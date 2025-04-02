@@ -1,12 +1,25 @@
 require("dotenv").config();
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
+const cookieParser = require("cookie-parser");
 const express = require("express");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.use(cors());
+// Middleware
+app.use(cors({ origin: ["http://localhost:5173"], credentials: true }));
 app.use(express.json());
+app.use(cookieParser());
+
+// Middleware to validate MongoDB ID
+const validateObjectId = (req, res, next) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) {
+    return respond(res, 400, "Invalid food ID format");
+  }
+  next();
+};
 
 const uri = process.env.MONGODB_URI;
 
@@ -24,14 +37,6 @@ const db = client.db("tasty-bites");
 // Collections
 const foodCollection = db.collection("foods");
 
-// Middleware to validate MongoDB ID
-const validateObjectId = (req, res, next) => {
-  const { id } = req.params;
-  if (!ObjectId.isValid(id)) {
-    return respond(res, 400, "Invalid food ID format");
-  }
-  next();
-};
 /* Utility functions Start **/
 //Capitalized letter function
 const capitalizedFirstLetter = (text) => {
@@ -117,6 +122,7 @@ const paginationFunc = async (collection, query = {}, options = {}) => {
     },
   };
 };
+
 /* Utility functions End **/
 
 // Respond function
@@ -227,6 +233,20 @@ async function run() {
     // await client.connect();
 
     // Auth Related API
+    app.post("/jwt", (req, res) => {
+      const user = req.body;
+      const token = jwt.sign(user, process.env.TOKEN_SECRET, {
+        expiresIn: "5h",
+      });
+      res
+        .cookie("token", token, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === "production",
+          sameSite: "strict",
+        })
+        .send({ success: true });
+    });
+
     // Food Related API
     app.post("/food", async (req, res) => {
       const numberFields = ["price", "quantity"];
@@ -242,7 +262,7 @@ async function run() {
       );
     });
 
-    app.get("/foods", async (req, res) => {
+    app.get("/foods", verifyToken, async (req, res) => {
       const { search, sort, page, limit } = req.query;
       await crudOperation("read", foodCollection, searchFunc(search), res, {
         entity: "foods",
