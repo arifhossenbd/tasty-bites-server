@@ -24,7 +24,6 @@ const validateObjectId = (req, res, next) => {
 // Token Verification Middleware
 const verifyToken = (req, res, next) => {
   const token = req.cookies?.token || req.headers.authorization?.split(" ")[1];
-  console.log(token)
   if (!token) {
     return res
       .status(401)
@@ -303,7 +302,6 @@ async function run() {
     });
 
     app.get("/food/:id", verifyToken, validateObjectId, async (req, res) => {
-      console.log(req);
       await crudOperation(
         "readOne",
         foodCollection,
