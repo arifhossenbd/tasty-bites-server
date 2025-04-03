@@ -21,6 +21,26 @@ const validateObjectId = (req, res, next) => {
   next();
 };
 
+// Token Verification Middleware
+const verifyToken = (req, res, next) => {
+  const token = req.cookies?.token || req.headers.authorization?.split(" ")[1];
+  console.log(token)
+  if (!token) {
+    return res
+      .status(401)
+      .send({ success: false, message: "Unauthorized access" });
+  }
+  jwt.verify(token, process.env.TOKEN_SECRET, (err, decoded) => {
+    if (err) {
+      return res
+        .status(401)
+        .send({ success: false, message: "Unauthorized access" });
+    }
+    req.decoded = decoded;
+    next();
+  });
+};
+
 const uri = process.env.MONGODB_URI;
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
@@ -244,11 +264,21 @@ async function run() {
           secure: process.env.NODE_ENV === "production",
           sameSite: "strict",
         })
+        .send({ success: true, token });
+    });
+
+    app.post("/logout", (req, res) => {
+      res
+        .clearCookie("token", {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === "production",
+          sameSite: "strict",
+        })
         .send({ success: true });
     });
 
     // Food Related API
-    app.post("/food", async (req, res) => {
+    app.post("/food", verifyToken, async (req, res) => {
       const numberFields = ["price", "quantity"];
       const foodData = convertNumberFields(req.body, numberFields);
       await crudOperation(
@@ -262,7 +292,7 @@ async function run() {
       );
     });
 
-    app.get("/foods", verifyToken, async (req, res) => {
+    app.get("/foods", async (req, res) => {
       const { search, sort, page, limit } = req.query;
       await crudOperation("read", foodCollection, searchFunc(search), res, {
         entity: "foods",
@@ -272,7 +302,7 @@ async function run() {
       });
     });
 
-    app.get("/food/:id", validateObjectId, async (req, res) => {
+    app.get("/food/:id", verifyToken, validateObjectId, async (req, res) => {
       console.log(req);
       await crudOperation(
         "readOne",
@@ -283,7 +313,7 @@ async function run() {
       );
     });
 
-    app.put("/food/:id", validateObjectId, async (req, res) => {
+    app.put("/food/:id", verifyToken, validateObjectId, async (req, res) => {
       const numberFields = ["price", "quantity", "createAt"];
       const foodData = convertNumberFields(req.body, numberFields);
       await crudOperation(
@@ -298,7 +328,7 @@ async function run() {
       );
     });
 
-    app.patch("/food/:id", validateObjectId, async (req, res) => {
+    app.patch("/food/:id", verifyToken, validateObjectId, async (req, res) => {
       const numberFields = ["price", "quantity"];
       const foodData = convertNumberFields(req.body, numberFields);
       await crudOperation(
@@ -313,7 +343,7 @@ async function run() {
       );
     });
 
-    app.delete("/food/:id", validateObjectId, async (req, res) => {
+    app.delete("/food/:id", verifyToken, validateObjectId, async (req, res) => {
       await crudOperation("delete", foodCollection, null, res, {
         entity: "food",
         filter: { _id: new ObjectId(req.params.id) },
