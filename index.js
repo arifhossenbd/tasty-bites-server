@@ -7,6 +7,12 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const app = express();
 const port = process.env.PORT || 3000;
 
+const { crudOperation } = require("./utils/crudOperation");
+const {
+  respond,
+  convertNumberFields
+} = require("./utils/helpers");
+
 // Middleware
 app.use(cors({ origin: ["http://localhost:5173"], credentials: true }));
 app.use(express.json());
@@ -56,196 +62,6 @@ const db = client.db("tasty-bites");
 // Collections
 const foodCollection = db.collection("foods");
 
-/* Utility functions Start **/
-//Capitalized letter function
-const capitalizedFirstLetter = (text) => {
-  return text.charAt(0).toUpperCase() + text.slice(1);
-};
-
-// ConvertNumberFields Function
-function convertNumberFields(data, fields) {
-  const converted = { ...data };
-  fields.forEach((field) => {
-    if (converted[field] !== undefined && converted[field] !== null) {
-      converted[field] = Number(converted[field]);
-    }
-  });
-  return converted;
-}
-
-// SortingFunction
-const sortFunc = (sortQuery) => {
-  if (!sortQuery) return { _id: -1 };
-  const [field, direction] = sortQuery.split(":");
-  const sortDirection = direction === "asc" ? 1 : -1;
-
-  const validSortFields = ["price", "name", "createdAt", "rating"];
-  if (validSortFields.includes(field)) {
-    return { [field]: sortDirection };
-  }
-  return { _id: -1 };
-};
-
-// SearchQueryFunction
-const searchFunc = (searchTerm) => {
-  if (!searchTerm) return {};
-  return {
-    $or: [
-      { name: { $regex: searchTerm, $options: "i" } },
-      { category: { $regex: searchTerm, $options: "i" } },
-      { description: { $regex: searchTerm, $options: "i" } },
-    ],
-  };
-};
-
-// Pagination function
-const paginationFunc = async (collection, query = {}, options = {}) => {
-  const { page, limit, sort } = options;
-
-  // Check if pagination parameter exists
-  const shouldPaginate = page !== undefined || limit !== undefined;
-
-  if (!shouldPaginate) {
-    // Return all results if no pagination requested
-    const data = await collection
-      .find(query)
-      .sort(sort || { _id: -1 })
-      .toArray();
-    return {
-      data,
-      pagination: null,
-    };
-  }
-
-  // Apply pagination
-  const currentPage = parseInt(page) || 1;
-  const pageSize = parseInt(limit) || 10;
-  const skip = (currentPage - 1) * pageSize;
-
-  const [data, total] = await Promise.all([
-    collection
-      .find(query)
-      .sort(sort || { _id: -1 })
-      .skip(skip)
-      .limit(pageSize)
-      .toArray(),
-    collection.countDocuments(query),
-  ]);
-  return {
-    data,
-    pagination: {
-      total,
-      page: currentPage,
-      pages: Math.ceil(total / pageSize),
-      limit: pageSize,
-    },
-  };
-};
-
-/* Utility functions End **/
-
-// Respond function
-const respond = (res, httpStatus, message, data = null) => {
-  const statusType =
-    httpStatus >= 200 && httpStatus < 300 ? "success" : "error";
-  const response = {
-    status: statusType,
-    httpStatus,
-    message,
-    count: Array.isArray(data) ? data?.length : data ? 1 : 0,
-    data: data || (Array.isArray(data) ? [] : null),
-  };
-  return res.status(httpStatus).json(response);
-};
-
-// Crud Operation Function
-const crudOperation = async (
-  operation,
-  collection,
-  data,
-  res,
-  options = {}
-) => {
-  try {
-    let result;
-    switch (operation) {
-      case "create":
-        result = await collection.insertOne(data);
-        respond(
-          res,
-          201,
-          `${capitalizedFirstLetter(options.entity)} created successfully`,
-          result
-        );
-        break;
-      case "read":
-        const { data: resultData, pagination } = await paginationFunc(
-          collection,
-          data,
-          {
-            page: options.page,
-            limit: options.limit,
-            sort: options.sort,
-          }
-        );
-        const responseData = pagination
-          ? { data: resultData, pagination }
-          : resultData;
-        respond(
-          res,
-          resultData.length > 0 ? 200 : 404,
-          resultData.length > 0
-            ? `${capitalizedFirstLetter(options.entity)} retrieved successfully`
-            : `No ${capitalizedFirstLetter(options.entity)} found`,
-          responseData
-        );
-        break;
-      case "readOne":
-        result = await collection.findOne(data);
-        respond(
-          res,
-          result ? 200 : 404,
-          result
-            ? `${capitalizedFirstLetter(options.entity)} retrieved successfully`
-            : `${capitalizedFirstLetter(options.entity)} not found`,
-          result
-        );
-        break;
-      case "update":
-        result = await collection.updateOne(options.filter, { $set: data });
-        respond(
-          res,
-          result.modifiedCount > 0 ? 200 : 404,
-          result.modifiedCount > 0
-            ? `${capitalizedFirstLetter(options.entity)} updated successfully`
-            : `${capitalizedFirstLetter(options.entity)} not found`,
-          result
-        );
-        break;
-      case "delete":
-        result = await collection.deleteOne(options.filter);
-        respond(
-          res,
-          result.deletedCount > 0 ? 200 : 404,
-          result.deletedCount > 0
-            ? `${capitalizedFirstLetter(options.entity)} deleted successfully`
-            : `${capitalizedFirstLetter(options.entity)} not found`,
-          result
-        );
-        break;
-      default:
-        return respond(res, 400, "Invalid operation");
-    }
-  } catch (error) {
-    console.error(`CRUD operation error: ${error}`);
-    respond(
-      res,
-      500,
-      `Failed to perform ${operation} operator on ${options.entity || "item"}`
-    );
-  }
-};
-
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
@@ -276,77 +92,119 @@ async function run() {
         .send({ success: true });
     });
 
-    // Food Related API
-    app.post("/food", verifyToken, async (req, res) => {
-      const numberFields = ["price", "quantity"];
-      const foodData = convertNumberFields(req.body, numberFields);
-      await crudOperation(
-        "create",
-        foodCollection,
-        { ...foodData, createAt: Date.now(), updateAt: Date.now() },
-        res,
-        {
-          entity: "food",
+    app.post("/food", async (req, res) => {
+      try {
+        const numberFields = ["price", "quantity"];
+        const foodData = convertNumberFields(req.body, numberFields);
+        const { foodName, foodImage, ...restData } = foodData;
+        const email = req.decoded?.email;
+        const existingData = await foodCollection.findOne({
+          foodName: { $regex: new RegExp(`^${foodName}`, "i") },
+          foodImage: foodImage,
+          "addedBy.email": email,
+        });
+
+        if (existingData) {
+          return respond(res, 409, `${foodName} already exists.`);
         }
-      );
+        const newFood = {
+          foodName,
+          foodImage,
+          ...restData,
+          createAt: Date.now(),
+          updateAt: Date.now(),
+        };
+        await crudOperation("create", foodCollection, newFood, res, {
+          entity: "food",
+        });
+      } catch (error) {
+        console.error(error);
+        throw error;
+      }
     });
 
     app.get("/foods", async (req, res) => {
-      const { search, sort, page, limit } = req.query;
-      await crudOperation("read", foodCollection, searchFunc(search), res, {
-        entity: "foods",
-        sort: sortFunc(sort),
-        page: page,
-        limit: limit,
-      });
+      try {
+        await crudOperation("read", foodCollection, {}, res, {
+          entity: "foods",
+        });
+      } catch (error) {
+        console.error(error);
+        throw error;
+      }
     });
 
-    app.get("/food/:id", verifyToken, validateObjectId, async (req, res) => {
-      await crudOperation(
-        "readOne",
-        foodCollection,
-        { _id: new ObjectId(req.params.id) },
-        res,
-        { entity: "food" }
-      );
-    });
-
-    app.put("/food/:id", verifyToken, validateObjectId, async (req, res) => {
-      const numberFields = ["price", "quantity", "createAt"];
-      const foodData = convertNumberFields(req.body, numberFields);
-      await crudOperation(
-        "update",
-        foodCollection,
-        { ...foodData, updateAt: Date.now() },
-        res,
-        {
+    app.get("/food/:id", validateObjectId, async (req, res) => {
+      const filter = { _id: new ObjectId(req.params.id) };
+      try {
+        await crudOperation("readOne", foodCollection, null, res, {
           entity: "food",
-          filter: { _id: new ObjectId(req.params.id) },
-        }
-      );
+          filter,
+        });
+      } catch (error) {
+        console.error(error);
+        throw error;
+      }
     });
 
-    app.patch("/food/:id", verifyToken, validateObjectId, async (req, res) => {
-      const numberFields = ["price", "quantity"];
-      const foodData = convertNumberFields(req.body, numberFields);
-      await crudOperation(
-        "update",
-        foodCollection,
-        { ...foodData, updateAt: Date.now() },
-        res,
-        {
+    app.put("/food/:id", validateObjectId, async (req, res) => {
+      try {
+        const filter = { _id: new ObjectId(req.params.id) };
+        const numberFields = ["price", "quantity", "createAt", "updateAt"];
+        const foodData = convertNumberFields(req.body, numberFields);
+        foodData.updateAt = Date.now();
+        const time = new Date();
+        function formatTime(time) {
+          return new Date(time).toLocaleTimeString();
+        }
+        console.log(formatTime(time), `Update time: ${foodData?.updateAt}`);
+        await crudOperation("update", foodCollection, foodData, res, {
           entity: "food",
-          filter: { _id: new ObjectId(req.params.id) },
-        }
-      );
+          filter,
+        });
+      } catch (error) {
+        console.error(error);
+        respond(res, 500, "Something went wrong");
+      }
     });
 
-    app.delete("/food/:id", verifyToken, validateObjectId, async (req, res) => {
-      await crudOperation("delete", foodCollection, null, res, {
-        entity: "food",
-        filter: { _id: new ObjectId(req.params.id) },
-      });
+    /** My Foods Related APIs */
+    app.get("/my-foods", verifyToken, async (req, res) => {
+      try {
+        const email = req.decoded?.email;
+
+        if (!email) {
+          return respond(res, 400, "User email is required for this operation");
+        }
+        // Validate the email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+          return respond(res, 400, "Invalid email format");
+        }
+        const filter = { "addedBy.email": email };
+        await crudOperation("read", foodCollection, null, res, {
+          entity: "foods",
+          filter,
+        });
+      } catch (error) {
+        respond(res, 500, "Something went wrong");
+      }
     });
+
+    app.delete("/food/:id", validateObjectId, async (req, res) => {
+      try {
+        const filter = { _id: new ObjectId(req.params.id) };
+        const result = await foodCollection.deleteOne(filter);
+        if (result.deletedCount === 0) {
+          return respond(res, 404, "Food not found");
+        }
+        respond(res, 200, "Food deleted successfully", result);
+      } catch (error) {
+        respond(res, 500, "Something went wrong");
+      }
+    });
+
+    /** My Foods Related APIs */
 
     // Send a ping to confirm a successful connection
     // await client.db("admin").command({ ping: 1 });
