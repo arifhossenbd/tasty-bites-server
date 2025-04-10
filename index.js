@@ -8,10 +8,7 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 const { crudOperation } = require("./utils/crudOperation");
-const {
-  respond,
-  convertNumberFields
-} = require("./utils/helpers");
+const { respond, convertNumberFields } = require("./utils/helpers");
 
 // Middleware
 app.use(cors({ origin: ["http://localhost:5173"], credentials: true }));
@@ -92,7 +89,7 @@ async function run() {
         .send({ success: true });
     });
 
-    app.post("/food", async (req, res) => {
+    app.post("/add/food", verifyToken, async (req, res) => {
       try {
         const numberFields = ["price", "quantity"];
         const foodData = convertNumberFields(req.body, numberFields);
@@ -134,11 +131,14 @@ async function run() {
       }
     });
 
-    app.get("/food/:id", validateObjectId, async (req, res) => {
-      const filter = { _id: new ObjectId(req.params.id) };
+    app.get("/category/foods", async (req, res) => {
       try {
-        await crudOperation("readOne", foodCollection, null, res, {
-          entity: "food",
+        const { category } = req.query;
+        const filter = category
+          ? { category: { $regex: new RegExp(`^${category}$`, "i") } }
+          : {};
+        await crudOperation("read", foodCollection, {}, res, {
+          entity: "foods",
           filter,
         });
       } catch (error) {
@@ -147,26 +147,63 @@ async function run() {
       }
     });
 
-    app.put("/food/:id", validateObjectId, async (req, res) => {
+    app.get("/latest/foods", async (req, res) => {
       try {
-        const filter = { _id: new ObjectId(req.params.id) };
-        const numberFields = ["price", "quantity", "createAt", "updateAt"];
-        const foodData = convertNumberFields(req.body, numberFields);
-        foodData.updateAt = Date.now();
-        const time = new Date();
-        function formatTime(time) {
-          return new Date(time).toLocaleTimeString();
-        }
-        console.log(formatTime(time), `Update time: ${foodData?.updateAt}`);
-        await crudOperation("update", foodCollection, foodData, res, {
-          entity: "food",
-          filter,
+        const limit = parseInt(req.query.latest) || 5;
+        await crudOperation("read", foodCollection, {}, res, {
+          entity: "foods",
+          sort: { updateAt: -1 },
+          limit: limit,
         });
       } catch (error) {
         console.error(error);
-        respond(res, 500, "Something went wrong");
+        throw error;
       }
     });
+
+    app.get(
+      "/food/details/:id",
+      verifyToken,
+      validateObjectId,
+      async (req, res) => {
+        const filter = { _id: new ObjectId(req.params.id) };
+        try {
+          await crudOperation("readOne", foodCollection, null, res, {
+            entity: "food",
+            filter,
+          });
+        } catch (error) {
+          console.error(error);
+          throw error;
+        }
+      }
+    );
+
+    app.put(
+      "/update/food/:id",
+      verifyToken,
+      validateObjectId,
+      async (req, res) => {
+        try {
+          const filter = { _id: new ObjectId(req.params.id) };
+          const numberFields = ["price", "quantity", "createAt", "updateAt"];
+          const foodData = convertNumberFields(req.body, numberFields);
+          foodData.updateAt = Date.now();
+          const time = new Date();
+          function formatTime(time) {
+            return new Date(time).toLocaleTimeString();
+          }
+          console.log(formatTime(time), `Update time: ${foodData?.updateAt}`);
+          await crudOperation("update", foodCollection, foodData, res, {
+            entity: "food",
+            filter,
+          });
+        } catch (error) {
+          console.error(error);
+          respond(res, 500, "Something went wrong");
+        }
+      }
+    );
 
     /** My Foods Related APIs */
     app.get("/my-foods", verifyToken, async (req, res) => {

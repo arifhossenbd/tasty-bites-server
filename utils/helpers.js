@@ -7,6 +7,14 @@ exports.convertNumberFields = (obj, fields) => {
   return obj;
 };
 
+exports.queriesData = async (name, req, res) => {
+  if (name) {
+    const lowerCase = name.toLowerCase();
+    const query = req.query.lowerCase;
+    return query;
+  }
+};
+
 exports.respond = (res, status, message = null, data = null) => {
   // Default messages for common status codes
   const statusMessages = {

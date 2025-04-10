@@ -29,7 +29,14 @@ exports.crudOperation = async (
         }
 
       case "read":
-        result = await collection.find(filter).toArray();
+        let cursor = collection.find(filter);
+        if (options.sort) {
+          cursor = cursor.sort(options.sort);
+        }
+        if (options.limit) {
+          cursor = cursor.limit(options.limit);
+        }
+        result = await cursor.toArray();
         message = `${entity} retrieved successfully`;
         if (!result.length) {
           return respond(res, 404, `${entity} not found`);
