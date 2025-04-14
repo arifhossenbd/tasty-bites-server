@@ -58,6 +58,7 @@ const db = client.db("tasty-bites");
 
 // Collections
 const foodCollection = db.collection("foods");
+const orderCollection = db.collection("orders");
 
 async function run() {
   try {
@@ -161,6 +162,20 @@ async function run() {
       }
     });
 
+    app.get("/top/foods", async (req, res) => {
+      try {
+        const limit = parseInt(req.query.latest) || 10;
+        await crudOperation("read", foodCollection, {}, res, {
+          entity: "foods",
+          sort: { purchaseCount: -1 },
+          limit: limit,
+        });
+      } catch (error) {
+        console.error(error);
+        throw error;
+      }
+    });
+
     app.get(
       "/food/details/:id",
       verifyToken,
@@ -205,6 +220,55 @@ async function run() {
       }
     );
 
+    app.post("/checkout", verifyToken, async (req, res) => {
+      const data = req.body;
+      try {
+        const result = await orderCollection.insertOne(data);
+        const cartItems = data?.items;
+        const bulkOps = cartItems.map((item) => ({
+          updateOne: {
+            filter: { _id: new ObjectId(item?.foodId) },
+            update: {
+              $inc: {
+                quantity: -(item?.quantity || 1),
+                purchaseCount: item?.quantity || 1,
+              },
+            },
+          },
+        }));
+        const updateResult = await foodCollection.bulkWrite(bulkOps);
+        respond(res, 200, "Order Confirmed & Stock Updated", {
+          orderInsert: result,
+          stockUpdate: updateResult
+        });
+      } catch (error) {
+        console.error("Checkout failed:", error);
+        respond(res, 500, "Checkout Failed", { error });
+      }
+    });
+
+    app.get("/my-orders", verifyToken, async (req, res) => {
+      try {
+        const email = req.decoded?.email;
+
+        if (!email) {
+          return respond(res, 400, "User email is required for this operation");
+        }
+        // Validate the email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+          return respond(res, 400, "Invalid email format");
+        }
+        const filter = { "user.email": email};
+        await crudOperation("read", orderCollection, null, res, {
+          entity: "orders",
+          filter,
+        });
+      } catch (error) {
+        respond(res, 500, "Something went wrong");
+      }
+    });
+
     /** My Foods Related APIs */
     app.get("/my-foods", verifyToken, async (req, res) => {
       try {
@@ -228,7 +292,7 @@ async function run() {
       }
     });
 
-    app.delete("/food/:id", validateObjectId, async (req, res) => {
+    app.delete("/delete/food/:id", validateObjectId, async (req, res) => {
       try {
         const filter = { _id: new ObjectId(req.params.id) };
         const result = await foodCollection.deleteOne(filter);
@@ -240,7 +304,6 @@ async function run() {
         respond(res, 500, "Something went wrong");
       }
     });
-
     /** My Foods Related APIs */
 
     // Send a ping to confirm a successful connection

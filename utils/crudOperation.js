@@ -59,7 +59,6 @@ exports.crudOperation = async (
           $set: data,
         });
         message = `${entity} updated successfully`;
-
         if (!result.modifiedCount) {
           return respond(res, 404, `${entity} not found`);
         } else {

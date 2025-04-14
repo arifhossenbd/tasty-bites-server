@@ -6,16 +6,12 @@ exports.convertNumberFields = (obj, fields) => {
   });
   return obj;
 };
-
-exports.queriesData = async (name, req, res) => {
-  if (name) {
-    const lowerCase = name.toLowerCase();
-    const query = req.query.lowerCase;
-    return query;
-  }
-};
-
 exports.respond = (res, status, message = null, data = null) => {
+  const capitalizeFirstLetter = (text) => {
+    return text
+      ? text?.charAt(0).toUpperCase() + text?.slice(1).toLowerCase()
+      : text;
+  };
   // Default messages for common status codes
   const statusMessages = {
     // Success 2xx
@@ -41,10 +37,11 @@ exports.respond = (res, status, message = null, data = null) => {
   const success = status >= 200 && status < 300;
   const response = {
     success,
-    message:
+    message: capitalizeFirstLetter(
       message ||
-      statusMessages[status] ||
-      (success ? "Operation successful" : "Operation failed"),
+        statusMessages[status] ||
+        (success ? "Operation successful" : "Operation failed")
+    ),
   };
 
   if (data) response.data = data;
