@@ -132,19 +132,38 @@ async function run() {
       }
     });
 
-    app.get("/category/foods", async (req, res) => {
+    app.get("/categories", async (req, res) => {
       try {
-        const { category } = req.query;
-        const filter = category
-          ? { category: { $regex: new RegExp(`^${category}$`, "i") } }
-          : {};
-        await crudOperation("read", foodCollection, {}, res, {
-          entity: "foods",
-          filter,
-        });
-      } catch (error) {
-        console.error(error);
-        throw error;
+        const result = await foodCollection
+          .aggregate([
+            {
+              $match: {
+                category: { $ne: null }, // 🛡️ Ensure category exists
+              },
+            },
+            {
+              $group: {
+                _id: "$category",
+                items: { $push: "$$ROOT" }, // 🔄 Push full document (all fields)
+              },
+            },
+            {
+              $project: {
+                name: "$_id", // Rename _id to name
+                items: 1,
+                _id: 0,
+              },
+            },
+            {
+              $sort: { name: 1 }, // 🔤 Sort by category name alphabetically
+            },
+          ])
+          .toArray();
+
+        respond(res, 200, "Categories data retrieved", result); // ✅ Consistent response
+      } catch (err) {
+        console.error("Error getting category-wise foods:", err);
+        res.status(500).json({ error: "Failed to get categories" }); // 🛡️ Consistent error
       }
     });
 
@@ -164,7 +183,7 @@ async function run() {
 
     app.get("/top/foods", async (req, res) => {
       try {
-        const limit = parseInt(req.query.latest) || 10;
+        const limit = parseInt(req.query.latest) || 9;
         await crudOperation("read", foodCollection, {}, res, {
           entity: "foods",
           sort: { purchaseCount: -1 },
@@ -239,7 +258,7 @@ async function run() {
         const updateResult = await foodCollection.bulkWrite(bulkOps);
         respond(res, 200, "Order Confirmed & Stock Updated", {
           orderInsert: result,
-          stockUpdate: updateResult
+          stockUpdate: updateResult,
         });
       } catch (error) {
         console.error("Checkout failed:", error);
@@ -259,7 +278,7 @@ async function run() {
         if (!emailRegex.test(email)) {
           return respond(res, 400, "Invalid email format");
         }
-        const filter = { "user.email": email};
+        const filter = { "user.email": email };
         await crudOperation("read", orderCollection, null, res, {
           entity: "orders",
           filter,
