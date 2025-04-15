@@ -59,11 +59,15 @@ const db = client.db("tasty-bites");
 // Collections
 const foodCollection = db.collection("foods");
 const orderCollection = db.collection("orders");
+const wishlistCollection = db.collection("wishlists");
 
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
     // await client.connect();
+
+    // Validate the email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     // Auth Related API
     app.post("/jwt", (req, res) => {
@@ -90,24 +94,25 @@ async function run() {
         .send({ success: true });
     });
 
+    /** Foods Related APIs */
     app.post("/add/food", verifyToken, async (req, res) => {
       try {
         const numberFields = ["price", "quantity"];
         const foodData = convertNumberFields(req.body, numberFields);
-        const { foodName, foodImage, ...restData } = foodData;
+        const { name, image, ...restData } = foodData;
         const email = req.decoded?.email;
         const existingData = await foodCollection.findOne({
-          foodName: { $regex: new RegExp(`^${foodName}`, "i") },
-          foodImage: foodImage,
+          name: { $regex: new RegExp(`^${name}`, "i") },
+          image: image,
           "addedBy.email": email,
         });
 
         if (existingData) {
-          return respond(res, 409, `${foodName} already exists.`);
+          return respond(res, 409, `${name} already exists.`);
         }
         const newFood = {
-          foodName,
-          foodImage,
+          name,
+          image,
           ...restData,
           createAt: Date.now(),
           updateAt: Date.now(),
@@ -125,6 +130,34 @@ async function run() {
       try {
         await crudOperation("read", foodCollection, {}, res, {
           entity: "foods",
+        });
+      } catch (error) {
+        console.error(error);
+        throw error;
+      }
+    });
+
+    app.get("/top/foods", async (req, res) => {
+      try {
+        const limit = parseInt(req.query.latest) || 9;
+        await crudOperation("read", foodCollection, {}, res, {
+          entity: "foods",
+          sort: { purchaseCount: -1 },
+          limit: limit,
+        });
+      } catch (error) {
+        console.error(error);
+        throw error;
+      }
+    });
+
+    app.get("/latest/foods", async (req, res) => {
+      try {
+        const limit = parseInt(req.query.latest) || 5;
+        await crudOperation("read", foodCollection, {}, res, {
+          entity: "foods",
+          sort: { updateAt: -1 },
+          limit: limit,
         });
       } catch (error) {
         console.error(error);
@@ -167,34 +200,6 @@ async function run() {
       }
     });
 
-    app.get("/latest/foods", async (req, res) => {
-      try {
-        const limit = parseInt(req.query.latest) || 5;
-        await crudOperation("read", foodCollection, {}, res, {
-          entity: "foods",
-          sort: { updateAt: -1 },
-          limit: limit,
-        });
-      } catch (error) {
-        console.error(error);
-        throw error;
-      }
-    });
-
-    app.get("/top/foods", async (req, res) => {
-      try {
-        const limit = parseInt(req.query.latest) || 9;
-        await crudOperation("read", foodCollection, {}, res, {
-          entity: "foods",
-          sort: { purchaseCount: -1 },
-          limit: limit,
-        });
-      } catch (error) {
-        console.error(error);
-        throw error;
-      }
-    });
-
     app.get(
       "/food/details/:id",
       verifyToken,
@@ -212,6 +217,26 @@ async function run() {
         }
       }
     );
+
+    app.get("/my-foods", verifyToken, async (req, res) => {
+      try {
+        const email = req.decoded?.email;
+
+        if (!email) {
+          return respond(res, 400, "User email is required for this operation");
+        }
+        if (!emailRegex.test(email)) {
+          return respond(res, 400, "Invalid email format");
+        }
+        const filter = { "addedBy.email": email };
+        await crudOperation("read", foodCollection, null, res, {
+          entity: "foods",
+          filter,
+        });
+      } catch (error) {
+        respond(res, 500, "Something went wrong");
+      }
+    });
 
     app.put(
       "/update/food/:id",
@@ -239,12 +264,31 @@ async function run() {
       }
     );
 
+    app.delete(
+      "/delete/food/:id",
+      verifyToken,
+      validateObjectId,
+      async (req, res) => {
+        try {
+          const filter = { _id: new ObjectId(req.params.id) };
+          const result = await foodCollection.deleteOne(filter);
+          if (result.deletedCount === 0) {
+            return respond(res, 404, "Food not found");
+          }
+          respond(res, 200, "Food deleted successfully", result);
+        } catch (error) {
+          respond(res, 500, "Something went wrong");
+        }
+      }
+    );
+    /** Foods Related APIs */
+
     app.post("/checkout", verifyToken, async (req, res) => {
       const data = req.body;
       try {
         const result = await orderCollection.insertOne(data);
         const cartItems = data?.items;
-        const bulkOps = cartItems.map((item) => ({
+        const bulkOps = cartItems?.map((item) => ({
           updateOne: {
             filter: { _id: new ObjectId(item?.foodId) },
             update: {
@@ -273,8 +317,6 @@ async function run() {
         if (!email) {
           return respond(res, 400, "User email is required for this operation");
         }
-        // Validate the email format
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
           return respond(res, 400, "Invalid email format");
         }
@@ -288,22 +330,46 @@ async function run() {
       }
     });
 
-    /** My Foods Related APIs */
-    app.get("/my-foods", verifyToken, async (req, res) => {
+    app.post("/add/wishlist", verifyToken, async (req, res) => {
+      try {
+        const numberFields = ["price", "quantity"];
+        const foodData = convertNumberFields(req.body, numberFields);
+        const { foodId, name, image, ...restData } = foodData;
+        const existingData = await wishlistCollection.findOne({foodId});
+
+        if (existingData) {
+          return respond(res, 409, `${name} already exists.`);
+        }
+        const newFood = {
+          foodId,
+          name,
+          image,
+          ...restData,
+          createAt: Date.now(),
+          updateAt: Date.now(),
+        };
+        await crudOperation("create", wishlistCollection, newFood, res, {
+          entity: "food",
+        });
+      } catch (error) {
+        console.error(error);
+        throw error;
+      }
+    });
+
+    app.get("/wishlist", verifyToken, async (req, res) => {
       try {
         const email = req.decoded?.email;
 
         if (!email) {
           return respond(res, 400, "User email is required for this operation");
         }
-        // Validate the email format
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
           return respond(res, 400, "Invalid email format");
         }
-        const filter = { "addedBy.email": email };
-        await crudOperation("read", foodCollection, null, res, {
-          entity: "foods",
+        const filter = { "user.email": email };
+        await crudOperation("read", wishlistCollection, null, res, {
+          entity: "wishlist",
           filter,
         });
       } catch (error) {
@@ -311,19 +377,23 @@ async function run() {
       }
     });
 
-    app.delete("/delete/food/:id", validateObjectId, async (req, res) => {
-      try {
-        const filter = { _id: new ObjectId(req.params.id) };
-        const result = await foodCollection.deleteOne(filter);
-        if (result.deletedCount === 0) {
-          return respond(res, 404, "Food not found");
+    app.delete(
+      "/delete/wishlist/item/:id",
+      verifyToken,
+      validateObjectId,
+      async (req, res) => {
+        try {
+          const filter = { _id: new ObjectId(req.params.id) };
+          const result = await wishlistCollection.deleteOne(filter);
+          if (result.deletedCount === 0) {
+            return respond(res, 404, "Food not found");
+          }
+          respond(res, 200, "Food deleted successfully", result);
+        } catch (error) {
+          respond(res, 500, "Something went wrong");
         }
-        respond(res, 200, "Food deleted successfully", result);
-      } catch (error) {
-        respond(res, 500, "Something went wrong");
       }
-    });
-    /** My Foods Related APIs */
+    );
 
     // Send a ping to confirm a successful connection
     // await client.db("admin").command({ ping: 1 });
