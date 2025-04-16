@@ -1,21 +1,61 @@
+/**
+ * Tasty Bites - Food Delivery Backend Server
+ *
+ * This server handles:
+ * - Authentication (JWT)
+ * - Food management
+ * - Order processing
+ * - Wishlist functionality
+ *
+ * Database: MongoDB
+ * Middlewares: CORS, JWT verification, Cookie parsing
+ */
+
+// Load environment variables
 require("dotenv").config();
+
+// Import required modules
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
 const express = require("express");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+
+// Initialize Express app
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Import utility functions
 const { crudOperation } = require("./utils/crudOperation");
 const { respond, convertNumberFields } = require("./utils/helpers");
 
-// Middleware
-app.use(cors({ origin: ["http://localhost:5173"], credentials: true }));
+/* ======================
+   MIDDLEWARE CONFIGURATION
+   ====================== */
+// CORS configuration for allowed origins
+app.use(
+  cors({
+    origin: [
+      "http://localhost:5173",
+      // "https://tasty-bites-67c7d.web.app",
+      // "https://tasty-bites-67c7d.firebaseapp.com",
+    ],
+    credentials: true, // Allow cookies
+  })
+);
+
+// Parse JSON bodies and cookies
 app.use(express.json());
 app.use(cookieParser());
 
-// Middleware to validate MongoDB ID
+/* ======================
+   CUSTOM MIDDLEWARE
+   ====================== */
+
+/**
+ * Validates MongoDB ObjectId format
+ * @middleware
+ */
 const validateObjectId = (req, res, next) => {
   const { id } = req.params;
   if (!ObjectId.isValid(id)) {
@@ -24,7 +64,10 @@ const validateObjectId = (req, res, next) => {
   next();
 };
 
-// Token Verification Middleware
+/**
+ * Verifies JWT token from cookies or Authorization header
+ * @middleware
+ */
 const verifyToken = (req, res, next) => {
   const token = req.cookies?.token || req.headers.authorization?.split(" ")[1];
   if (!token) {
@@ -38,14 +81,15 @@ const verifyToken = (req, res, next) => {
         .status(401)
         .send({ success: false, message: "Unauthorized access" });
     }
-    req.decoded = decoded;
+    req.decoded = decoded; // Attach decoded user to request
     next();
   });
 };
 
+/* ======================
+   DATABASE CONNECTION
+   ====================== */
 const uri = process.env.MONGODB_URI;
-
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -61,40 +105,69 @@ const foodCollection = db.collection("foods");
 const orderCollection = db.collection("orders");
 const wishlistCollection = db.collection("wishlists");
 
+/* ======================
+   API ROUTES
+   ====================== */
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
     // await client.connect();
 
-    // Validate the email format
+    // Email validation regex
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-    // Auth Related API
+    /* =============
+       AUTH ROUTES
+       ============= */
+    /**
+     * Generates JWT token and sets it as HTTP-only cookie
+     * @route POST /jwt
+     */
     app.post("/jwt", (req, res) => {
       const user = req.body;
       const token = jwt.sign(user, process.env.TOKEN_SECRET, {
         expiresIn: "5h",
       });
+
       res
         .cookie("token", token, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === "production",
-          sameSite: "strict",
+          httpOnly: true, // Prevent XSS
+          secure: true, // HTTPS only
+          sameSite: "None", // Cross-site cookies
+          maxAge: 5 * 60 * 60 * 1000, // 5 hours
         })
-        .send({ success: true, token });
+        .status(200)
+        .json({ success: true, message: "Token created successfully" });
     });
 
+    /**
+     * Clears the authentication cookie
+     * @route POST /logout
+     */
     app.post("/logout", (req, res) => {
-      res
-        .clearCookie("token", {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === "production",
-          sameSite: "strict",
-        })
-        .send({ success: true });
+      try {
+        res
+          .clearCookie("token", {
+            httpOnly: true,
+            secure: true,
+            sameSite: "None",
+          })
+          .status(200)
+          .json({ success: true, message: "Logged out successfully" });
+      } catch (error) {
+        console.error("Logout error:", error);
+        res.status(500).json({ success: false, message: "Logout failed" });
+      }
     });
 
-    /** Foods Related APIs */
+    /* =============
+       FOOD ROUTES
+       ============= */
+    /**
+     * Adds a new food item
+     * @route POST /add/food
+     * @protected
+     */
     app.post("/add/food", verifyToken, async (req, res) => {
       try {
         const numberFields = ["price", "quantity"];
@@ -126,6 +199,10 @@ async function run() {
       }
     });
 
+    /**
+     * Get all food items
+     * @route GET /foods
+     */
     app.get("/foods", async (req, res) => {
       try {
         await crudOperation("read", foodCollection, {}, res, {
@@ -137,9 +214,13 @@ async function run() {
       }
     });
 
+    /**
+     * Get top food items
+     * @route GET /top/foods
+     */
     app.get("/top/foods", async (req, res) => {
       try {
-        const limit = parseInt(req.query.latest) || 9;
+        const limit = parseInt(req.query.latest) || 10;
         await crudOperation("read", foodCollection, {}, res, {
           entity: "foods",
           sort: { purchaseCount: -1 },
@@ -151,6 +232,10 @@ async function run() {
       }
     });
 
+    /**
+     * Get latest food items
+     * @route GET /latest/foods
+     */
     app.get("/latest/foods", async (req, res) => {
       try {
         const limit = parseInt(req.query.latest) || 5;
@@ -165,6 +250,10 @@ async function run() {
       }
     });
 
+    /**
+     * Get category wise food items
+     * @route GET /categories
+     */
     app.get("/categories", async (req, res) => {
       try {
         const result = await foodCollection
@@ -200,6 +289,11 @@ async function run() {
       }
     });
 
+    /**
+     * Get single food item
+     * @route GET /food/details/:id
+     * @protected
+     */
     app.get(
       "/food/details/:id",
       verifyToken,
@@ -218,6 +312,11 @@ async function run() {
       }
     );
 
+    /**
+     * Get my food items
+     * @route GET /my-foods
+     * @protected
+     */
     app.get("/my-foods", verifyToken, async (req, res) => {
       try {
         const email = req.decoded?.email;
@@ -238,6 +337,11 @@ async function run() {
       }
     });
 
+    /**
+     * Update food item
+     * @route PUT /update/food/:id
+     * @protected
+     */
     app.put(
       "/update/food/:id",
       verifyToken,
@@ -264,6 +368,11 @@ async function run() {
       }
     );
 
+    /**
+     * Delete food item
+     * @route DELETE /delete/food/:id
+     * @protected
+     */
     app.delete(
       "/delete/food/:id",
       verifyToken,
@@ -281,7 +390,98 @@ async function run() {
         }
       }
     );
-    /** Foods Related APIs */
+
+    /* =============
+       WISHLIST ROUTES
+       ============= */
+    /**
+     * Adds item to user's wishlist
+     * @route POST /add/wishlist
+     * @protected
+     */
+    app.post("/add/wishlist", verifyToken, async (req, res) => {
+      try {
+        const numberFields = ["price", "quantity"];
+        const foodData = convertNumberFields(req.body, numberFields);
+        const { foodId, name, image, ...restData } = foodData;
+        const existingData = await wishlistCollection.findOne({ foodId });
+
+        if (existingData) {
+          return respond(res, 409, `${name} already exists.`);
+        }
+        const newFood = {
+          foodId,
+          name,
+          image,
+          ...restData,
+          createAt: Date.now(),
+          updateAt: Date.now(),
+        };
+        await crudOperation("create", wishlistCollection, newFood, res, {
+          entity: "food",
+        });
+      } catch (error) {
+        console.error(error);
+        throw error;
+      }
+    });
+
+    /**
+     * Get wishlist food item
+     * @route GET /wishlist
+     * @protected
+     */
+    app.get("/wishlist", verifyToken, async (req, res) => {
+      try {
+        const email = req.decoded?.email;
+
+        if (!email) {
+          return respond(res, 400, "User email is required for this operation");
+        }
+        if (!emailRegex.test(email)) {
+          return respond(res, 400, "Invalid email format");
+        }
+        const filter = { "user.email": email };
+        await crudOperation("read", wishlistCollection, null, res, {
+          entity: "wishlist",
+          filter,
+        });
+      } catch (error) {
+        respond(res, 500, "Something went wrong");
+      }
+    });
+
+    /**
+     * Delete food item from wishlist
+     * @route DELETE /delete/wishlist/:id
+     * @protected
+     */
+    app.delete(
+      "/delete/wishlist/item/:id",
+      verifyToken,
+      validateObjectId,
+      async (req, res) => {
+        try {
+          const filter = { _id: new ObjectId(req.params.id) };
+          const result = await wishlistCollection.deleteOne(filter);
+          if (result.deletedCount === 0) {
+            return respond(res, 404, "Food not found");
+          }
+          respond(res, 200, "Food deleted successfully", result);
+        } catch (error) {
+          respond(res, 500, "Something went wrong");
+        }
+      }
+    );
+
+    /* =============
+       ORDER ROUTES
+       ============= */
+    /**
+     * Processes food order and updates inventory
+     * @route POST /checkout
+     * @protected
+     */
 
     app.post("/checkout", verifyToken, async (req, res) => {
       const data = req.body;
@@ -310,6 +510,11 @@ async function run() {
       }
     });
 
+    /**
+     * Get my-orders food item
+     * @route GET /my-orders
+     * @protected
+     */
     app.get("/my-orders", verifyToken, async (req, res) => {
       try {
         const email = req.decoded?.email;
@@ -330,71 +535,6 @@ async function run() {
       }
     });
 
-    app.post("/add/wishlist", verifyToken, async (req, res) => {
-      try {
-        const numberFields = ["price", "quantity"];
-        const foodData = convertNumberFields(req.body, numberFields);
-        const { foodId, name, image, ...restData } = foodData;
-        const existingData = await wishlistCollection.findOne({foodId});
-
-        if (existingData) {
-          return respond(res, 409, `${name} already exists.`);
-        }
-        const newFood = {
-          foodId,
-          name,
-          image,
-          ...restData,
-          createAt: Date.now(),
-          updateAt: Date.now(),
-        };
-        await crudOperation("create", wishlistCollection, newFood, res, {
-          entity: "food",
-        });
-      } catch (error) {
-        console.error(error);
-        throw error;
-      }
-    });
-
-    app.get("/wishlist", verifyToken, async (req, res) => {
-      try {
-        const email = req.decoded?.email;
-
-        if (!email) {
-          return respond(res, 400, "User email is required for this operation");
-        }
-        if (!emailRegex.test(email)) {
-          return respond(res, 400, "Invalid email format");
-        }
-        const filter = { "user.email": email };
-        await crudOperation("read", wishlistCollection, null, res, {
-          entity: "wishlist",
-          filter,
-        });
-      } catch (error) {
-        respond(res, 500, "Something went wrong");
-      }
-    });
-
-    app.delete(
-      "/delete/wishlist/item/:id",
-      verifyToken,
-      validateObjectId,
-      async (req, res) => {
-        try {
-          const filter = { _id: new ObjectId(req.params.id) };
-          const result = await wishlistCollection.deleteOne(filter);
-          if (result.deletedCount === 0) {
-            return respond(res, 404, "Food not found");
-          }
-          respond(res, 200, "Food deleted successfully", result);
-        } catch (error) {
-          respond(res, 500, "Something went wrong");
-        }
-      }
-    );
-
     // Send a ping to confirm a successful connection
     // await client.db("admin").command({ ping: 1 });
     console.log("You successfully connected to MongoDB!");
@@ -407,8 +547,11 @@ async function run() {
 }
 run();
 
+/* ======================
+   SERVER INITIALIZATION
+   ====================== */
 app.get("/", (req, res) => {
-  res.send("Server is cooking!");
+  res.send("Tasty Bites Server is running!");
 });
 
 app.listen(port, () => {
