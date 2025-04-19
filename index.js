@@ -33,16 +33,10 @@ const { respond, convertNumberFields } = require("./utils/helpers");
    MIDDLEWARE CONFIGURATION
    ====================== */
 // CORS configuration for allowed origins
-app.use(
-  cors({
-    origin: [
-      "http://localhost:5173",
-      // "https://tasty-bites-67c7d.web.app",
-      // "https://tasty-bites-67c7d.firebaseapp.com",
-    ],
-    credentials: true, // Allow cookies
-  })
-);
+app.use(cors({
+  origin: ["http://localhost:5173", "https://tasty-bites-67c7d.web.app"],
+  credentials: true
+}));
 
 // Parse JSON bodies and cookies
 app.use(express.json());
@@ -69,19 +63,25 @@ const validateObjectId = (req, res, next) => {
  * @middleware
  */
 const verifyToken = (req, res, next) => {
-  const token = req.cookies?.token || req.headers.authorization?.split(" ")[1];
-  if (!token) {
-    return res
-      .status(401)
-      .send({ success: false, message: "Unauthorized access" });
+  let token = req.cookies?.token;
+  
+  // If no cookie token, check Authorization header
+  if (!token && req.headers.authorization) {
+    const authHeader = req.headers.authorization;
+    if (authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    }
   }
+
+  if (!token) {
+    return res.status(401).send({ success: false, message: "Unauthorized access" });
+  }
+
   jwt.verify(token, process.env.TOKEN_SECRET, (err, decoded) => {
     if (err) {
-      return res
-        .status(401)
-        .send({ success: false, message: "Unauthorized access" });
+      return res.status(401).send({ success: false, message: "Unauthorized access" });
     }
-    req.decoded = decoded; // Attach decoded user to request
+    req.decoded = decoded;
     next();
   });
 };
@@ -128,13 +128,12 @@ async function run() {
       const token = jwt.sign(user, process.env.TOKEN_SECRET, {
         expiresIn: "5h",
       });
-
       res
         .cookie("token", token, {
-          httpOnly: true, // Prevent XSS
-          secure: true, // HTTPS only
-          sameSite: "None", // Cross-site cookies
-          maxAge: 5 * 60 * 60 * 1000, // 5 hours
+          httpOnly: true,
+          secure: process.env.NODE_ENV === "production",
+          sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
+          maxAge: 5 * 60 * 60 * 1000,
         })
         .status(200)
         .json({ success: true, message: "Token created successfully" });
@@ -146,17 +145,16 @@ async function run() {
      */
     app.post("/logout", (req, res) => {
       try {
-        res
-          .clearCookie("token", {
-            httpOnly: true,
-            secure: true,
-            sameSite: "None",
-          })
-          .status(200)
-          .json({ success: true, message: "Logged out successfully" });
+        const isProduction = process.env.NODE_ENV === "production";
+        res.clearCookie("token", {
+          httpOnly: true,
+          secure: isProduction,
+          sameSite: isProduction ? "none" : "lax",
+          domain: isProduction ? ".tasty-bites-67c7d.web.app" : "localhost"
+        }).status(200).json({ success: true });
       } catch (error) {
         console.error("Logout error:", error);
-        res.status(500).json({ success: false, message: "Logout failed" });
+        res.status(500).json({ success: false });
       }
     });
 
